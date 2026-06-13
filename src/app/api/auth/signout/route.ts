@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { rejectCrossSite } from "@/lib/api-security";
-import { currentUser } from "@/lib/local-auth";
+import { destroySession } from "@/lib/local-auth";
 
 export async function POST(request: Request) {
   const rejected = rejectCrossSite(request);
   if (rejected) return rejected;
-  if (!(await currentUser())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  return NextResponse.json({ delivered: false, localOnly: true });
+  await destroySession();
+  return NextResponse.json({ signedOut: true });
 }

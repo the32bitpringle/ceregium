@@ -53,6 +53,14 @@ export interface PatternAssessment {
   recommendation: string;
 }
 
+export interface WellbeingExercise {
+  id: string;
+  title: string;
+  duration: string;
+  reason: string;
+  steps: string[];
+}
+
 export interface Integration {
   name: string;
   category: string;
@@ -77,19 +85,4 @@ export interface WorkloadItem {
   course?: string;
   pointsPossible?: number;
   gradeImpact?: "low" | "medium" | "high" | "unknown";
-}
-
-export interface TokenSet {
-  accessToken: string;
-  refreshToken?: string;
-  expiresAt?: string;
-  scopes: string[];
-}
-
-export interface ConnectorConnection {
-  id: string;
-  userId: string;
-  provider: string;
-  encryptedTokens: string;
-  scopes: string[];
 }

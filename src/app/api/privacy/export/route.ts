@@ -1,35 +1,32 @@
 import { NextResponse } from "next/server";
+import { db, jsonParse } from "@/lib/db";
 import { decrypt } from "@/lib/encryption";
-import { hasSupabaseConfig } from "@/lib/runtime-config";
-import { requireUser } from "@/lib/supabase";
+import { currentUser } from "@/lib/local-auth";
 
-export async function GET(request: Request) {
-  if (!hasSupabaseConfig()) return NextResponse.json({ mode: "demo" });
-  const auth = await requireUser(request);
-  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const [profile, consents, reflections, analyses, connections, workload, safetyPlan] =
-    await Promise.all([
-      auth.supabase.from("profiles").select("*").eq("id", auth.user.id).maybeSingle(),
-      auth.supabase.from("consents").select("*").eq("user_id", auth.user.id),
-      auth.supabase.from("daily_reflections").select("*").eq("user_id", auth.user.id),
-      auth.supabase.from("reflection_analyses").select("*").eq("user_id", auth.user.id),
-      auth.supabase.from("connections").select("provider, scopes, connected_at, last_synced_at").eq("user_id", auth.user.id),
-      auth.supabase.from("workload_items").select("*").eq("user_id", auth.user.id),
-      auth.supabase.from("safety_plans").select("verified_at, active, consent_version, cooldown_hours").eq("user_id", auth.user.id).maybeSingle(),
-    ]);
-  const exportedReflections = (reflections.data ?? []).map((item) => ({
-    ...item,
-    encrypted_text: undefined,
-    text: decrypt(item.encrypted_text),
-  }));
+export async function GET() {
+  const user = await currentUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const reflections = (db.prepare("select * from reflections where user_id=?").all(user.id) as Array<Record<string, unknown>>).map(
+    (row) => ({
+      id: row.id,
+      localDate: row.local_date,
+      text: decrypt(String(row.encrypted_text)),
+      energy: row.energy,
+      stress: row.stress,
+      sleep: row.sleep,
+      workload: row.workload,
+      analysis: jsonParse(String(row.analysis_json), {}),
+    }),
+  );
+  const workload = db.prepare("select * from workload_items where user_id=?").all(user.id);
+  const pairings = db.prepare(
+    "select id,label,last_used_at,created_at,revoked_at from browser_pairings where user_id=?",
+  ).all(user.id);
   return NextResponse.json({
     exportedAt: new Date().toISOString(),
-    profile: profile.data,
-    consents: consents.data ?? [],
-    reflections: exportedReflections,
-    reflectionAnalyses: analyses.data ?? [],
-    connections: connections.data ?? [],
-    workload: workload.data ?? [],
-    safetyPlan: safetyPlan.data,
+    profile: user,
+    reflections,
+    workload,
+    browserPairings: pairings,
   });
 }

@@ -6,7 +6,6 @@ import {
   CalendarDays,
   Check,
   ChevronRight,
-  CircleUserRound,
   Download,
   HeartHandshake,
   LayoutDashboard,
@@ -16,17 +15,15 @@ import {
   Menu,
   MessageCircleMore,
   NotebookPen,
-  RefreshCw,
   Settings,
   ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import type { Session, SupabaseClient } from "@supabase/supabase-js";
-import { createBrowserSupabase } from "@/lib/supabase";
 import { createBalancePairs, workloadSupport } from "@/lib/balancing";
 import { assessBurnoutPattern } from "@/lib/burnout-assessment";
+import { recommendedExercises } from "@/lib/exercises";
 import type {
   AppSettings,
   AnalysisResult,
@@ -38,14 +35,8 @@ import type {
 } from "@/lib/types";
 
 const integrations: Integration[] = [
-  { name: "Google Classroom", category: "School", status: "connected", detail: "Assignments and due dates" },
-  { name: "Google Calendar", category: "Schedule", status: "connected", detail: "Event timing and density" },
-  { name: "Notion", category: "Planning", status: "available", detail: "Pages you explicitly select" },
-  { name: "Discord", category: "Social", status: "available", detail: "Approved servers and activity" },
-  { name: "Instagram", category: "Social", status: "limited", detail: "Professional accounts only" },
-  { name: "X", category: "Social", status: "available", detail: "Posts and DMs with approved access" },
-  { name: "Slack", category: "Communication", status: "available", detail: "Approved workspace channels" },
-  { name: "Canvas", category: "School", status: "available", detail: "Coursework and calendar" },
+  { name: "Browser companion", category: "Browser", status: "available", detail: "Import assignments you review from classroom pages" },
+  { name: "Manual entry", category: "School", status: "connected", detail: "Add assignments directly without another account" },
 ];
 
 const navItems: Array<{ view: View; label: string; icon: typeof LayoutDashboard }> = [
@@ -64,72 +55,6 @@ const defaultRatings: ReflectionRatings = {
   workload: 3,
 };
 
-const sampleReflections: Reflection[] = [
-  {
-    id: "sample-1",
-    createdAt: "Sample: Monday",
-    text: "Finished two assignments after practice and went to sleep later than planned.",
-    ratings: { energy: 2, stress: 4, sleep: 2, workload: 4 },
-    analysis: {
-      status: "watch",
-      score: 62,
-      summary: "Less recovery time than your usual routine.",
-      themes: ["late work", "high workload", "reduced sleep"],
-      protectiveFactors: ["physical activity"],
-      balances: createBalancePairs(["late work", "high workload", "reduced sleep"], ["physical activity"]),
-      confidence: 0.78,
-    },
-  },
-  {
-    id: "sample-2",
-    createdAt: "Sample: Tuesday",
-    text: "Had a quiz, club meeting, and homework. I skipped my usual break to catch up.",
-    ratings: { energy: 2, stress: 4, sleep: 3, workload: 5 },
-    analysis: {
-      status: "elevated",
-      score: 73,
-      summary: "Workload is repeatedly displacing recovery time.",
-      themes: ["schedule compression", "missed breaks", "high workload"],
-      protectiveFactors: ["social connection"],
-      balances: createBalancePairs(["schedule compression", "missed breaks", "high workload"], ["social connection"]),
-      confidence: 0.84,
-    },
-  },
-];
-
-const sampleWorkload: WorkloadItem[] = [
-  {
-    id: "sample-history",
-    title: "History response",
-    source: "Google Classroom",
-    course: "U.S. History",
-    dueAt: new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString(),
-    status: "upcoming",
-    pointsPossible: 5,
-    gradeImpact: "low",
-  },
-  {
-    id: "sample-physics",
-    title: "Physics quiz",
-    source: "Google Calendar",
-    course: "Physics",
-    dueAt: new Date(Date.now() + 28 * 60 * 60 * 1000).toISOString(),
-    status: "upcoming",
-    pointsPossible: 40,
-    gradeImpact: "high",
-  },
-  {
-    id: "sample-essay",
-    title: "Literature essay draft",
-    source: "Google Classroom",
-    course: "English",
-    dueAt: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString(),
-    status: "upcoming",
-    pointsPossible: 20,
-    gradeImpact: "medium",
-  },
-];
-
 const defaultSettings: AppSettings = {
   timezone: "America/Los_Angeles",
   reducedMotion: false,
@@ -138,15 +63,30 @@ const defaultSettings: AppSettings = {
   analysisEnabled: true,
 };
 
+const APP_LOADED_AT = Date.now();
+
 interface RuntimeConfig {
-  mode: "demo" | "configured";
+  mode: "local";
   services: {
-    supabase: boolean;
-    google: boolean;
-    openai: boolean;
-    email: boolean;
-    sms: boolean;
+    sqlite: boolean;
+    openrouter: boolean;
+    browserCompanion: boolean;
   };
+}
+
+interface LocalUser {
+  id: string;
+  email: string;
+  displayName: string;
+  dateOfBirth: string;
+  timezone: string;
+}
+
+interface BrowserPairing {
+  id: string;
+  label: string;
+  last_used_at?: string;
+  created_at: string;
 }
 
 function StatusMark({ status }: { status: AnalysisResult["status"] }) {
@@ -211,13 +151,7 @@ function RatingInput({
   );
 }
 
-function AuthPanel({
-  supabase,
-  onSession,
-}: {
-  supabase: SupabaseClient;
-  onSession: (session: Session) => void;
-}) {
+function AuthPanel({ onAuthenticated }: { onAuthenticated: () => void }) {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -230,29 +164,14 @@ function AuthPanel({
     event.preventDefault();
     setBusy(true);
     setMessage("");
-    if (mode === "signup") {
-      const { data, error } = await supabase.auth.signUp({ email, password });
-      if (error) setMessage(error.message);
-      else if (data.session) {
-        const response = await fetch("/api/profile", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${data.session.access_token}`,
-          },
-          body: JSON.stringify({ dateOfBirth, displayName }),
-        });
-        const result = await response.json();
-        if (!response.ok) setMessage(result.error);
-        else onSession(data.session);
-      } else {
-        setMessage("Check your email to confirm your account, then sign in.");
-      }
-    } else {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) setMessage(error.message);
-      else if (data.session) onSession(data.session);
-    }
+    const response = await fetch(mode === "signup" ? "/api/auth/signup" : "/api/auth/signin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, dateOfBirth, displayName }),
+    });
+    const result = await response.json();
+    if (!response.ok) setMessage(result.error ?? "Could not sign in.");
+    else onAuthenticated();
     setBusy(false);
   }
 
@@ -286,7 +205,7 @@ function AuthPanel({
           </label>
           <label>
             Password
-            <input type="password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} required />
+            <input type="password" minLength={10} value={password} onChange={(event) => setPassword(event.target.value)} required />
           </label>
           {message && <p className="form-message">{message}</p>}
           <button className="primary-button" disabled={busy}>
@@ -302,67 +221,17 @@ function AuthPanel({
   );
 }
 
-function ProfileSetup({
-  session,
-  onComplete,
-}: {
-  session: Session;
-  onComplete: () => void;
-}) {
-  const [displayName, setDisplayName] = useState("");
-  const [dateOfBirth, setDateOfBirth] = useState("");
-  const [message, setMessage] = useState("");
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    const response = await fetch("/api/profile", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({ displayName, dateOfBirth }),
-    });
-    const result = await response.json();
-    if (!response.ok) setMessage(result.error);
-    else onComplete();
-  }
-
-  return (
-    <main className="auth-page">
-      <section className="auth-panel">
-        <div className="brand auth-brand">
-          <div className="brand-symbol" aria-hidden="true"><span /><span /></div>
-          <span>Ceregium</span>
-        </div>
-        <div className="auth-copy">
-          <h1>Complete your profile</h1>
-          <p>This age check is required before Ceregium can store wellbeing data.</p>
-        </div>
-        <form onSubmit={submit}>
-          <label>Name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required /></label>
-          <label>Date of birth<input type="date" value={dateOfBirth} onChange={(event) => setDateOfBirth(event.target.value)} required /></label>
-          {message && <p className="form-message">{message}</p>}
-          <button className="primary-button">Continue</button>
-        </form>
-      </section>
-    </main>
-  );
-}
-
 export default function Home() {
-  const supabase = useMemo(() => createBrowserSupabase(), []);
   const [runtime, setRuntime] = useState<RuntimeConfig | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
+  const [startupError, setStartupError] = useState("");
+  const [user, setUser] = useState<LocalUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
-  const [profileReady, setProfileReady] = useState(false);
-  const [needsProfile, setNeedsProfile] = useState(false);
   const [view, setView] = useState<View>("dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
   const [reflection, setReflection] = useState("");
   const [ratings, setRatings] = useState(defaultRatings);
-  const [reflections, setReflections] = useState<Reflection[]>(sampleReflections);
-  const [connected, setConnected] = useState<string[]>(["Google Classroom", "Google Calendar"]);
+  const [reflections, setReflections] = useState<Reflection[]>([]);
+  const [connected, setConnected] = useState<string[]>(["Manual entry"]);
   const [analysisEnabled, setAnalysisEnabled] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -373,79 +242,92 @@ export default function Home() {
   const [verificationPreview, setVerificationPreview] = useState("");
   const [safetyMessage, setSafetyMessage] = useState("");
   const [contactVerified, setContactVerified] = useState(false);
-  const [workload, setWorkload] = useState<WorkloadItem[]>(sampleWorkload);
+  const [workload, setWorkload] = useState<WorkloadItem[]>([]);
+  const [pairings, setPairings] = useState<BrowserPairing[]>([]);
+  const [pairingToken, setPairingToken] = useState("");
+  const [showWorkloadForm, setShowWorkloadForm] = useState(false);
+  const [manualTitle, setManualTitle] = useState("");
+  const [manualCourse, setManualCourse] = useState("");
+  const [manualDueAt, setManualDueAt] = useState("");
+  const [manualPoints, setManualPoints] = useState("");
+  const [manualImpact, setManualImpact] =
+    useState<NonNullable<WorkloadItem["gradeImpact"]>>("unknown");
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [actionMessage, setActionMessage] = useState("");
 
   useEffect(() => {
     let active = true;
-    fetch("/api/config")
-      .then((response) => response.json())
-      .then((config: RuntimeConfig) => {
+    Promise.all([fetch("/api/config"), fetch("/api/auth/session")])
+      .then(async ([configResponse, sessionResponse]) => {
+        const [config, sessionData] = await Promise.all([
+          configResponse.json(),
+          sessionResponse.json(),
+        ]);
         if (!active) return;
         setRuntime(config);
-        if (config.mode === "demo" || !supabase) {
-          const stored = window.localStorage.getItem("ceregium-reflections");
-          const storedConnections = window.localStorage.getItem("ceregium-connections");
-          const storedSettings = window.localStorage.getItem("ceregium-settings");
-          if (stored) setReflections(JSON.parse(stored));
-          if (storedConnections) setConnected(JSON.parse(storedConnections));
-          if (storedSettings) setSettings(JSON.parse(storedSettings));
-          setAuthReady(true);
-        }
+        setUser(sessionData.user ?? null);
+        setAuthReady(true);
+      })
+      .catch(() => {
+        if (active) setStartupError("Ceregium could not load its local workspace.");
       });
-    return () => { active = false; };
-  }, [supabase]);
-
-  useEffect(() => {
-    if (!supabase || runtime?.mode !== "configured") return;
-    let active = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (!active) return;
-      setSession(data.session);
-      setAuthReady(true);
-    });
-    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-      setAuthReady(true);
-    });
     return () => {
       active = false;
-      data.subscription.unsubscribe();
     };
-  }, [runtime?.mode, supabase]);
+  }, []);
+
+  async function refreshSession() {
+    const [configResponse, sessionResponse] = await Promise.all([
+      fetch("/api/config"),
+      fetch("/api/auth/session"),
+    ]);
+    const [config, sessionData] = await Promise.all([
+      configResponse.json(),
+      sessionResponse.json(),
+    ]);
+    setRuntime(config);
+    setUser(sessionData.user ?? null);
+    setAuthReady(true);
+  }
 
   useEffect(() => {
-    if (runtime?.mode !== "configured" || !session) return;
-    const headers = { Authorization: `Bearer ${session.access_token}` };
+    if (!user) return;
     Promise.all([
-      fetch("/api/profile", { headers }).then((response) => response.json()),
-      fetch("/api/reflections", { headers }).then((response) => response.json()),
-      fetch("/api/integrations/status", { headers }).then((response) => response.json()),
-      fetch("/api/workload", { headers }).then((response) => response.json()),
-      fetch("/api/settings", { headers }).then((response) => response.json()),
-    ]).then(([profileData, reflectionData, integrationData, workloadData, settingsData]) => {
-      setNeedsProfile(!profileData.profile);
-      setProfileReady(true);
-      if (reflectionData.reflections?.length) setReflections(reflectionData.reflections);
-      if (integrationData.providers?.some((item: { provider: string }) => item.provider === "google")) {
-        setConnected(["Google Classroom", "Google Calendar"]);
-      }
-      if (workloadData.items?.length) setWorkload(workloadData.items);
-      if (settingsData.settings) setSettings(settingsData.settings);
-    });
-  }, [runtime?.mode, session]);
-
-  const authHeaders = useMemo<Record<string, string>>(
-    (): Record<string, string> =>
-      session ? { Authorization: `Bearer ${session.access_token}` } : {},
-    [session],
-  );
+      fetch("/api/reflections").then((response) => response.json()),
+      fetch("/api/integrations/status").then((response) => response.json()),
+      fetch("/api/workload").then((response) => response.json()),
+      fetch("/api/settings").then((response) => response.json()),
+    ])
+      .then(([reflectionData, integrationData, workloadData, settingsData]) => {
+        setReflections(reflectionData.reflections ?? []);
+        setPairings(integrationData.pairings ?? []);
+        setConnected(integrationData.pairings?.length ? ["Manual entry", "Browser companion"] : ["Manual entry"]);
+        setWorkload(workloadData.items ?? []);
+        if (settingsData.settings) setSettings(settingsData.settings);
+      })
+      .catch(() => setStartupError("Ceregium could not load your private workspace."));
+  }, [user]);
 
   const latest = reflections[0]?.analysis;
   const patternAssessment = useMemo(
     () => assessBurnoutPattern(reflections, workload),
     [reflections, workload],
+  );
+  const exercises = useMemo(
+    () => recommendedExercises(reflections, patternAssessment),
+    [reflections, patternAssessment],
+  );
+  const upcomingWork = useMemo(
+    () => workload.filter((item) => item.status !== "submitted").slice(0, 3),
+    [workload],
+  );
+  const urgentWorkCount = useMemo(
+    () =>
+      workload.filter((item) => {
+        const hours = (new Date(item.dueAt).getTime() - APP_LOADED_AT) / 3_600_000;
+        return item.status === "overdue" || (hours >= 0 && hours <= 48);
+      }).length,
+    [workload],
   );
   const patternStatus: AnalysisResult["status"] =
     patternAssessment.likelihood === "likely"
@@ -467,10 +349,9 @@ export default function Home() {
     if (!reflection.trim()) return;
     setSubmitting(true);
 
-    const configured = runtime?.mode === "configured" && session;
-    const response = await fetch(configured ? "/api/reflections" : "/api/reflections/analyze", {
+    const response = await fetch("/api/reflections", {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: reflection, ratings, analysisEnabled }),
     });
     const result = await response.json();
@@ -479,21 +360,9 @@ export default function Home() {
       setSubmitting(false);
       return;
     }
-    const analysis: AnalysisResult = configured ? result.reflection.analysis : result;
-    const entry: Reflection = configured ? result.reflection : {
-        id: crypto.randomUUID(),
-        createdAt: new Intl.DateTimeFormat("en-US", {
-          weekday: "long",
-          month: "short",
-          day: "numeric",
-        }).format(new Date()),
-        text: reflection.trim(),
-        ratings,
-        analysis,
-      };
-    const next = [entry, ...reflections.filter((item) => !item.id.startsWith("sample-"))];
+    const entry: Reflection = result.reflection;
+    const next = [entry, ...reflections.filter((item) => item.id !== entry.id)];
     setReflections(next);
-    if (!configured) window.localStorage.setItem("ceregium-reflections", JSON.stringify(next));
     setReflection("");
     setRatings(defaultRatings);
     setSubmitting(false);
@@ -501,44 +370,25 @@ export default function Home() {
     window.setTimeout(() => setSaved(false), 2500);
   }
 
-  function toggleConnection(name: string) {
-    const next = connected.includes(name)
-      ? connected.filter((item) => item !== name)
-      : [...connected, name];
-    setConnected(next);
-    window.localStorage.setItem("ceregium-connections", JSON.stringify(next));
-  }
-
-  async function connectIntegration(name: string) {
-    if (
-      runtime?.mode === "configured" &&
-      (name === "Google Classroom" || name === "Google Calendar")
-    ) {
-      const response = await fetch("/api/integrations/google/authorize", { headers: authHeaders });
-      const result = await response.json();
-      if (!response.ok) {
-        setActionMessage(result.error);
-        return;
-      }
-      window.location.assign(result.url);
-      return;
-    }
-    toggleConnection(name);
-  }
-
-  async function syncGoogle() {
-    const response = await fetch("/api/integrations/google/sync", {
-      method: "POST",
-      headers: authHeaders,
-    });
+  async function createBrowserPairing() {
+    const response = await fetch("/api/browser/pairings", { method: "POST" });
     const result = await response.json();
-    if (!response.ok) setActionMessage(result.error);
-    else {
-      setActionMessage(`Synced ${result.synced} Google items.`);
-      const workloadResponse = await fetch("/api/workload", { headers: authHeaders });
-      const workloadResult = await workloadResponse.json();
-      if (workloadResult.items) setWorkload(workloadResult.items);
-    }
+    if (!response.ok) return setActionMessage(result.error);
+    setPairingToken(result.pairing.token);
+    const status = await fetch("/api/browser/pairings").then((item) => item.json());
+    setPairings(status.pairings ?? []);
+    setConnected(["Manual entry", "Browser companion"]);
+  }
+
+  async function revokeBrowserPairing(id: string) {
+    const response = await fetch(`/api/browser/pairings?id=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) return setActionMessage("Could not revoke browser pairing.");
+    setPairings((current) => current.filter((pairing) => pairing.id !== id));
+    setPairingToken("");
+    setConnected(["Manual entry"]);
+    setActionMessage("Browser pairing revoked.");
   }
 
   async function updateGradeImpact(
@@ -546,14 +396,16 @@ export default function Home() {
     gradeImpact: NonNullable<WorkloadItem["gradeImpact"]>,
   ) {
     setWorkload((current) =>
-      current.map((candidate) =>
+      {
+        const next = current.map((candidate) =>
         candidate.id === item.id ? { ...candidate, gradeImpact } : candidate,
-      ),
+        );
+        return next;
+      },
     );
-    if (runtime?.mode !== "configured") return;
     const response = await fetch("/api/workload", {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", ...authHeaders },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: item.id, gradeImpact }),
     });
     if (!response.ok) {
@@ -562,24 +414,66 @@ export default function Home() {
     }
   }
 
+  async function addManualWorkload(event: FormEvent) {
+    event.preventDefault();
+    const dueAt = new Date(manualDueAt);
+    if (!manualTitle.trim() || Number.isNaN(dueAt.getTime())) return;
+    const payload = {
+      title: manualTitle.trim(),
+      course: manualCourse.trim() || undefined,
+      dueAt: dueAt.toISOString(),
+      pointsPossible: manualPoints ? Number(manualPoints) : undefined,
+      gradeImpact: manualImpact,
+    };
+    const response = await fetch("/api/workload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json();
+    if (!response.ok) return setActionMessage(result.error ?? "Could not add assignment.");
+    const item: WorkloadItem = result.item;
+    const next = [...workload, item].sort(
+      (a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime(),
+    );
+    setWorkload(next);
+    setManualTitle("");
+    setManualCourse("");
+    setManualDueAt("");
+    setManualPoints("");
+    setManualImpact("unknown");
+    setShowWorkloadForm(false);
+    setActionMessage("Assignment added.");
+  }
+
+  async function deleteManualWorkload(item: WorkloadItem) {
+    const response = await fetch(`/api/workload/${item.id}`, { method: "DELETE" });
+    const result = await response.json();
+    if (!response.ok) return setActionMessage(result.error ?? "Could not delete assignment.");
+    const next = workload.filter((candidate) => candidate.id !== item.id);
+    setWorkload(next);
+    setActionMessage("Assignment deleted.");
+  }
+
   async function requestVerification() {
     setSafetyMessage("");
     const response = await fetch("/api/safety-plan/request-verification", {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ destination: trustedContact }),
     });
     const result = await response.json();
     if (!response.ok) return setSafetyMessage(result.error);
     setVerificationId(result.verificationId);
     setVerificationPreview(result.previewCode ?? "");
-    setSafetyMessage(result.delivered ? "Verification code sent." : "Delivery provider is not configured; use the development code.");
+    setVerificationCode("LOCAL");
+    setSafetyMessage("Contact saved locally. Confirm with the code LOCAL.");
   }
 
   async function confirmVerification() {
     const response = await fetch("/api/safety-plan/confirm", {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ verificationId, code: verificationCode, active: safetyActive }),
     });
     const result = await response.json();
@@ -589,22 +483,17 @@ export default function Home() {
   }
 
   async function sendTestNotification() {
-    const response = await fetch("/api/safety-plan/test", { method: "POST", headers: authHeaders });
+    const response = await fetch("/api/safety-plan/test", { method: "POST" });
     const result = await response.json();
     setSafetyMessage(
-      result.delivered ? "Test notification delivered." : "Test completed in preview mode.",
+      result.delivered ? "Test notification delivered." : "Local safety-plan test completed.",
     );
   }
 
   async function saveSettings() {
-    if (runtime?.mode === "demo") {
-      window.localStorage.setItem("ceregium-settings", JSON.stringify(settings));
-      setActionMessage("Settings saved locally.");
-      return;
-    }
     const response = await fetch("/api/settings", {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", ...authHeaders },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(settings),
     });
     const result = await response.json();
@@ -612,13 +501,8 @@ export default function Home() {
   }
 
   async function exportData() {
-    let data: unknown;
-    if (runtime?.mode === "configured") {
-      const response = await fetch("/api/privacy/export", { headers: authHeaders });
-      data = await response.json();
-    } else {
-      data = { exportedAt: new Date().toISOString(), reflections, connected, workload, settings };
-    }
+    const response = await fetch("/api/privacy/export");
+    const data: unknown = await response.json();
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -630,26 +514,24 @@ export default function Home() {
   async function deleteAccount() {
     const confirmation = window.prompt("Type DELETE to permanently remove your Ceregium data.");
     if (confirmation !== "DELETE") return;
-    if (runtime?.mode === "configured") {
-      const response = await fetch("/api/privacy/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({ confirmation }),
-      });
-      if (!response.ok) {
-        const result = await response.json();
-        return setActionMessage(result.error);
-      }
-      await supabase?.auth.signOut();
-    } else {
-      window.localStorage.removeItem("ceregium-reflections");
-      window.localStorage.removeItem("ceregium-connections");
-      window.localStorage.removeItem("ceregium-settings");
-      setReflections(sampleReflections);
-      setConnected(["Google Classroom", "Google Calendar"]);
-      setSettings(defaultSettings);
+    const response = await fetch("/api/privacy/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmation }),
+    });
+    if (!response.ok) {
+      const result = await response.json();
+      return setActionMessage(result.error);
     }
-    setActionMessage("Account data deleted.");
+    setUser(null);
+  }
+
+  async function signOut() {
+    await fetch("/api/auth/signout", { method: "POST" });
+    setUser(null);
+    setReflections([]);
+    setWorkload([]);
+    setPairings([]);
   }
 
   function selectView(next: View) {
@@ -658,26 +540,25 @@ export default function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  if (startupError) {
+    return (
+      <main className="error-page">
+        <section>
+          <h1>Workspace unavailable</h1>
+          <p>{startupError} Your saved data was not changed.</p>
+          <button className="primary-button" onClick={() => window.location.reload()}>
+            Try again
+          </button>
+        </section>
+      </main>
+    );
+  }
+
   if (!runtime || !authReady) {
     return <main className="loading-page">Loading Ceregium...</main>;
   }
 
-  if (runtime.mode === "configured" && supabase && !session) {
-    return <AuthPanel supabase={supabase} onSession={setSession} />;
-  }
-
-  if (runtime.mode === "configured" && session && (!profileReady || needsProfile)) {
-    if (!profileReady) return <main className="loading-page">Loading your private workspace...</main>;
-    return (
-      <ProfileSetup
-        session={session}
-        onComplete={() => {
-          setNeedsProfile(false);
-          setProfileReady(true);
-        }}
-      />
-    );
-  }
+  if (!user) return <AuthPanel onAuthenticated={refreshSession} />;
 
   return (
     <div className="app-frame">
@@ -732,13 +613,13 @@ export default function Home() {
           <button className="menu-button" onClick={() => setMenuOpen(true)} aria-label="Open menu">
             <Menu size={21} />
           </button>
-          <p>{runtime.mode === "demo" ? "Demo workspace · data stays in this browser" : "Private student workspace"}</p>
+          <p>Local workspace · encrypted SQLite storage</p>
           <button
             className="profile-button"
-            aria-label={session ? "Sign out" : "Profile"}
-            onClick={() => session && supabase?.auth.signOut()}
+            aria-label="Sign out"
+            onClick={signOut}
           >
-            {session ? <LogOut size={19} /> : <CircleUserRound size={21} />}
+            <LogOut size={19} />
           </button>
         </header>
         {actionMessage && (
@@ -795,33 +676,36 @@ export default function Home() {
                   <li>
                     <span>1</span>
                     <div>
-                      <strong>Deadlines are clustering.</strong>
-                      <p>Three sample assignments fall within the next four days.</p>
-                      <p className="digest-balance"><Check size={14} /> Choose the nearest deadline and define its smallest first step.</p>
+                      <strong>{urgentWorkCount ? "Deadlines need attention." : "No deadline cluster detected."}</strong>
+                      <p>
+                        {urgentWorkCount
+                          ? `${urgentWorkCount} assignments are due or overdue within 48 hours.`
+                          : "Your current workload has room for planned recovery."}
+                      </p>
+                      <p className="digest-balance"><Check size={14} /> {urgentWorkCount ? "Choose the nearest deadline and define its smallest first step." : "Keep one recovery block protected before new work is added."}</p>
                     </div>
                   </li>
                   <li>
                     <span>2</span>
                     <div>
-                      <strong>Recovery time appears lower.</strong>
-                      <p>Recent sample reflections mention late work and missed breaks.</p>
-                      <p className="digest-balance"><Check size={14} /> Protect one 20-minute break before beginning the next task.</p>
+                      <strong>{patternAssessment.score >= 52 ? "Recovery is being displaced." : "Recovery remains within range."}</strong>
+                      <p>{patternAssessment.evidence[0] ?? "Add daily reflections to establish a personal baseline."}</p>
+                      <p className="digest-balance"><Check size={14} /> {patternAssessment.recommendation}</p>
                     </div>
                   </li>
                   <li>
                     <span>3</span>
                     <div>
-                      <strong>Practice remains a useful reset.</strong>
-                      <p>Physical activity appears alongside better mood language.</p>
-                      <p className="digest-balance"><Check size={14} /> Keep this supportive routine protected when workload rises.</p>
+                      <strong>{exercises[0].title}</strong>
+                      <p>{exercises[0].reason}</p>
+                      <p className="digest-balance"><Check size={14} /> Try this {exercises[0].duration} exercise today.</p>
                     </div>
                   </li>
                 </ol>
                 <div className="digest-action">
                   <Check size={18} />
                   <p>
-                    <strong>One manageable action:</strong> protect a 20-minute break before
-                    starting tonight&apos;s second assignment.
+                    <strong>One manageable action:</strong> {patternAssessment.recommendation}
                   </p>
                 </div>
               </section>
@@ -829,24 +713,18 @@ export default function Home() {
               <section className="section-block schedule-block">
                 <div className="section-title">
                   <h2>Next 48 hours</h2>
-                  <span>Sample schedule</span>
+                  <span>{upcomingWork.length} upcoming</span>
                 </div>
                 <div className="schedule-list">
-                  <div>
-                    <span className="schedule-time">4:00</span>
-                    <span>Practice</span>
-                    <span>Today</span>
-                  </div>
-                  <div>
-                    <span className="schedule-time">11:59</span>
-                    <span>History response</span>
-                    <span>Today</span>
-                  </div>
-                  <div>
-                    <span className="schedule-time">8:30</span>
-                    <span>Physics quiz</span>
-                    <span>Tomorrow</span>
-                  </div>
+                  {upcomingWork.length ? upcomingWork.map((item) => (
+                    <div key={item.id}>
+                      <span className="schedule-time">
+                        {new Date(item.dueAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                      </span>
+                      <span>{item.title}</span>
+                      <span>{new Date(item.dueAt).toLocaleDateString("en-US", { weekday: "short" })}</span>
+                    </div>
+                  )) : <p className="empty-state">No assignments yet. Add one manually or use the browser companion.</p>}
                 </div>
                 <button className="text-button" onClick={() => selectView("workload")}>
                   Open workload <ChevronRight size={16} />
@@ -865,6 +743,27 @@ export default function Home() {
               <button className="primary-button" onClick={() => selectView("reflect")}>
                 Write today&apos;s reflection
               </button>
+            </section>
+
+            <section className="exercise-section">
+              <div className="section-title">
+                <h2>Exercises for today</h2>
+                <span>Supportive self-care, not treatment</span>
+              </div>
+              <div className="exercise-grid">
+                {exercises.map((exercise) => (
+                  <article key={exercise.id}>
+                    <div>
+                      <strong>{exercise.title}</strong>
+                      <span>{exercise.duration}</span>
+                    </div>
+                    <p>{exercise.reason}</p>
+                    <ol>
+                      {exercise.steps.map((step) => <li key={step}>{step}</li>)}
+                    </ol>
+                  </article>
+                ))}
+              </div>
             </section>
           </div>
         )}
@@ -1046,7 +945,7 @@ export default function Home() {
             <div className="page-heading">
               <div>
                 <h1>Integrations</h1>
-                <p>Choose each source and the exact data Ceregium may process.</p>
+                <p>Import reviewed assignment metadata without sharing school passwords or OAuth tokens.</p>
               </div>
               <span className="connection-count">{connected.length} connected</span>
             </div>
@@ -1062,16 +961,9 @@ export default function Home() {
                       <p>{integration.detail}</p>
                     </div>
                     <span>{integration.category}</span>
-                    {integration.status === "limited" ? (
-                      <button className="secondary-button" disabled>Limited API</button>
-                    ) : (
-                      <button
-                        className={isConnected ? "connected-button" : "secondary-button"}
-                        onClick={() => connectIntegration(integration.name)}
-                      >
-                        {isConnected ? <><Check size={16} /> Connected</> : "Connect"}
-                      </button>
-                    )}
+                    <span className={isConnected ? "connection-state connected" : "connection-state"}>
+                      {isConnected ? "Connected" : "Available"}
+                    </span>
                   </article>
                 );
               })}
@@ -1080,18 +972,49 @@ export default function Home() {
             <section className="data-policy">
               <ShieldCheck size={22} />
               <div>
-                <h2>Granular consent by default</h2>
+                <h2>Browser companion</h2>
                 <p>
-                  Connecting an account does not grant unrestricted access. Content analysis is
-                  separate from activity metadata, and either permission can be revoked.
+                  Load the unpacked extension from <code>browser-extension/</code>, create a pairing
+                  key below, then paste it into the extension. The extension scans the current page
+                  only when you ask and requires review before import.
                 </p>
               </div>
             </section>
-            {runtime.services.google && connected.includes("Google Classroom") && (
-              <button className="secondary-button sync-button" onClick={syncGoogle}>
-                <RefreshCw size={16} /> Sync Google now
-              </button>
-            )}
+            <section className="browser-pairing">
+              <div>
+                <h2>Pair this browser</h2>
+                <p>Pairing keys can import assignments but cannot read reflections or account data.</p>
+              </div>
+              {!pairingToken && (
+                <button className="primary-button" onClick={createBrowserPairing}>
+                  Create pairing key
+                </button>
+              )}
+              {pairingToken && (
+                <div className="pairing-token">
+                  <label>
+                    One-time pairing key
+                    <input value={pairingToken} readOnly onFocus={(event) => event.currentTarget.select()} />
+                  </label>
+                  <p>Store this in the extension now. Ceregium will not show the key again.</p>
+                </div>
+              )}
+              {pairings.map((pairing) => (
+                <div className="pairing-row" key={pairing.id}>
+                  <div>
+                    <strong>{pairing.label}</strong>
+                    <span>
+                      {pairing.last_used_at
+                        ? `Last import ${new Date(pairing.last_used_at).toLocaleString()}`
+                        : "Not used yet"}
+                    </span>
+                  </div>
+                  <button className="secondary-button" onClick={() => revokeBrowserPairing(pairing.id)}>
+                    Revoke
+                  </button>
+                </div>
+              ))}
+            </section>
           </div>
         )}
 
@@ -1102,17 +1025,88 @@ export default function Home() {
                 <h1>Workload</h1>
                 <p>Upcoming schoolwork and calendar commitments in one ordered view.</p>
               </div>
-              {runtime.services.google && (
-                <button className="secondary-button" onClick={syncGoogle}>
-                  <RefreshCw size={16} /> Sync Google
+              <div className="heading-actions">
+                <button
+                  className="primary-button"
+                  onClick={() => setShowWorkloadForm((current) => !current)}
+                >
+                  {showWorkloadForm ? "Cancel" : "Add assignment"}
                 </button>
-              )}
+              </div>
             </div>
+            {showWorkloadForm && (
+              <form className="manual-workload-form" onSubmit={addManualWorkload}>
+                <label>
+                  Assignment
+                  <input
+                    value={manualTitle}
+                    onChange={(event) => setManualTitle(event.target.value)}
+                    maxLength={160}
+                    required
+                  />
+                </label>
+                <label>
+                  Course
+                  <input
+                    value={manualCourse}
+                    onChange={(event) => setManualCourse(event.target.value)}
+                    maxLength={120}
+                  />
+                </label>
+                <label>
+                  Due
+                  <input
+                    type="datetime-local"
+                    value={manualDueAt}
+                    onChange={(event) => setManualDueAt(event.target.value)}
+                    required
+                  />
+                </label>
+                <label>
+                  Points
+                  <input
+                    type="number"
+                    min="0"
+                    max="100000"
+                    value={manualPoints}
+                    onChange={(event) => setManualPoints(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Grade impact
+                  <select
+                    value={manualImpact}
+                    onChange={(event) =>
+                      setManualImpact(
+                        event.target.value as NonNullable<WorkloadItem["gradeImpact"]>,
+                      )
+                    }
+                  >
+                    <option value="unknown">Unknown</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </label>
+                <button className="primary-button">Save assignment</button>
+              </form>
+            )}
             <section className="workload-list">
               {workload.map((item) => (
                 <article key={item.id}>
                   <div>
-                    <strong>{item.title}</strong>
+                    <div className="workload-title">
+                      <strong>{item.title}</strong>
+                      {item.source === "Manual" && (
+                        <button
+                          type="button"
+                          onClick={() => deleteManualWorkload(item)}
+                          aria-label={`Delete ${item.title}`}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
                     <p>
                       {item.course ?? item.source}
                       {item.pointsPossible !== undefined ? ` · ${item.pointsPossible} points` : ""}
@@ -1156,7 +1150,7 @@ export default function Home() {
             <div className="page-heading">
               <div>
                 <h1>Safety plan</h1>
-                <p>Choose one person Ceregium may contact only under your preauthorized rules.</p>
+                <p>Keep a trusted person easy to find when you decide you need support.</p>
               </div>
             </div>
 
@@ -1164,8 +1158,8 @@ export default function Home() {
               <HeartHandshake size={28} />
               <h2>Trusted contact</h2>
               <p>
-                Normal and elevated signals remain private. A verified contact can receive a
-                limited summary only after repeated critical signals and active consent.
+                This contact is encrypted and stored only in your local Ceregium database.
+                Ceregium will never contact them automatically.
               </p>
               <label>
                 Contact email or phone
@@ -1182,15 +1176,15 @@ export default function Home() {
                   onChange={(event) => setSafetyActive(event.target.checked)}
                 />
                 <span>
-                  <strong>Authorize critical alerts</strong>
-                  <span>You can pause or revoke this at any time.</span>
+                  <strong>Add this person to my local plan</strong>
+                  <span>You decide if and when to contact them.</span>
                 </span>
               </label>
               <div className="shared-preview">
-                <strong>What would be shared</strong>
+                <strong>Suggested message</strong>
                 <p>
                   “Ceregium noticed repeated changes in workload, sleep, and daily reflections.
-                  Please check in directly.” No journal text or private messages are included.
+                  Could you check in with me?” Your journal text is never included.
                 </p>
               </div>
               {!verificationId && (
@@ -1199,7 +1193,7 @@ export default function Home() {
                   disabled={!trustedContact || !safetyActive}
                   onClick={requestVerification}
                 >
-                  Send verification code
+                  Save contact locally
                 </button>
               )}
               {verificationId && !contactVerified && (
@@ -1213,15 +1207,15 @@ export default function Home() {
                       placeholder="6-digit code"
                     />
                   </label>
-                  {verificationPreview && <p>Development code: <strong>{verificationPreview}</strong></p>}
-                  <button className="primary-button" onClick={confirmVerification} disabled={verificationCode.length !== 6}>
-                    Confirm contact
+                  {verificationPreview && <p>Local confirmation code: <strong>{verificationPreview}</strong></p>}
+                  <button className="primary-button" onClick={confirmVerification} disabled={verificationCode.toUpperCase() !== "LOCAL"}>
+                    Confirm local plan
                   </button>
                 </div>
               )}
               {contactVerified && (
                 <button className="secondary-button" onClick={sendTestNotification}>
-                  Send test notification
+                  Test local plan
                 </button>
               )}
               {safetyMessage && <p className="form-message">{safetyMessage}</p>}
@@ -1249,8 +1243,8 @@ export default function Home() {
             <section className="privacy-list">
               {[
                 ["Reflection analysis", "Enabled", "AI identifies themes in entries you choose to analyze."],
-                ["Raw connected content", "7 days", "Temporary content is deleted after features are derived."],
-                ["Derived patterns", "180 days", "Used to compare recent activity with your personal baseline."],
+                ["Storage", "Local SQLite", "Your account data is stored on this Ceregium server."],
+                ["Browser imports", "Metadata only", "Only assignments you review and approve are imported."],
                 ["School access", "None", "Your school cannot view your dashboard or reflections."],
               ].map(([title, value, description]) => (
                 <div key={title}>

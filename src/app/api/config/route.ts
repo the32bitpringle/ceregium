@@ -1,21 +1,12 @@
 import { NextResponse } from "next/server";
-import {
-  hasEmailConfig,
-  hasGoogleConfig,
-  hasOpenAIConfig,
-  hasSmsConfig,
-  hasSupabaseConfig,
-} from "@/lib/runtime-config";
 
 export async function GET() {
   return NextResponse.json({
-    mode: hasSupabaseConfig() ? "configured" : "demo",
+    mode: "local",
     services: {
-      supabase: hasSupabaseConfig(),
-      google: hasGoogleConfig(),
-      openai: hasOpenAIConfig(),
-      email: hasEmailConfig(),
-      sms: hasSmsConfig(),
+      sqlite: true,
+      openrouter: Boolean(process.env.OPENROUTER_API_KEY),
+      browserCompanion: true,
     },
   });
 }

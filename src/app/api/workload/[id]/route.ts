@@ -12,6 +12,6 @@ export async function DELETE(
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await context.params;
-  db.prepare("delete from reflections where id=? and user_id=?").run(id, user.id);
+  db.prepare("delete from workload_items where id=? and user_id=?").run(id, user.id);
   return NextResponse.json({ deleted: true });
 }

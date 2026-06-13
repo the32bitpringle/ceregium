@@ -32,6 +32,9 @@ export function workloadSupport(item: WorkloadItem, strainScore = 0) {
   if (item.gradeImpact === "high") {
     return "Protect a focused block for this high-impact assignment and reduce effort on a lower-impact task instead.";
   }
+  if (item.gradeImpact === "medium") {
+    return "Aim for a complete, good-enough submission and avoid spending recovery time on optional polish.";
+  }
   if (item.status === "overdue") {
     return "Ask what can still be submitted, then complete the smallest acceptable next step.";
   }

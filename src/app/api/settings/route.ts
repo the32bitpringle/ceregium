@@ -1,31 +1,38 @@
 import { NextResponse } from "next/server";
+import { rejectCrossSite } from "@/lib/api-security";
 import { settingsSchema } from "@/lib/api-schemas";
-import { hasSupabaseConfig } from "@/lib/runtime-config";
-import { requireUser } from "@/lib/supabase";
+import { db, jsonParse } from "@/lib/db";
+import { currentUser } from "@/lib/local-auth";
+import type { AppSettings } from "@/lib/types";
 
-export async function GET(request: Request) {
-  if (!hasSupabaseConfig()) return NextResponse.json({ mode: "demo", settings: null });
-  const auth = await requireUser(request);
-  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const { data, error } = await auth.supabase
-    .from("profiles")
-    .select("settings")
-    .eq("id", auth.user.id)
-    .single();
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ mode: "configured", settings: data.settings });
+const defaults: AppSettings = {
+  timezone: "America/Los_Angeles",
+  reducedMotion: false,
+  digestEnabled: true,
+  digestHour: 7,
+  analysisEnabled: true,
+};
+
+export async function GET() {
+  const user = await currentUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const row = db.prepare("select settings_json from users where id=?").get(user.id) as
+    | { settings_json: string }
+    | undefined;
+  return NextResponse.json({ settings: jsonParse(row?.settings_json, defaults) });
 }
 
 export async function PATCH(request: Request) {
-  const parsed = settingsSchema.safeParse(await request.json());
+  const rejected = rejectCrossSite(request);
+  if (rejected) return rejected;
+  const user = await currentUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const parsed = settingsSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid settings" }, { status: 400 });
-  if (!hasSupabaseConfig()) return NextResponse.json({ mode: "demo", settings: parsed.data });
-  const auth = await requireUser(request);
-  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const { error } = await auth.supabase
-    .from("profiles")
-    .update({ settings: parsed.data, timezone: parsed.data.timezone })
-    .eq("id", auth.user.id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  db.prepare("update users set settings_json=?,timezone=? where id=?").run(
+    JSON.stringify(parsed.data),
+    parsed.data.timezone,
+    user.id,
+  );
   return NextResponse.json({ settings: parsed.data });
 }

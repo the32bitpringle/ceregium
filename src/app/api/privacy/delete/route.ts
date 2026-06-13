@@ -1,19 +1,19 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { hasSupabaseConfig } from "@/lib/runtime-config";
-import { createAdminSupabase, requireUser } from "@/lib/supabase";
+import { rejectCrossSite } from "@/lib/api-security";
+import { db } from "@/lib/db";
+import { currentUser, destroySession } from "@/lib/local-auth";
 
 const schema = z.object({ confirmation: z.literal("DELETE") });
 
 export async function POST(request: Request) {
-  const parsed = schema.safeParse(await request.json());
+  const rejected = rejectCrossSite(request);
+  if (rejected) return rejected;
+  const user = await currentUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Type DELETE to confirm" }, { status: 400 });
-  if (!hasSupabaseConfig()) return NextResponse.json({ mode: "demo", deleted: true });
-  const auth = await requireUser(request);
-  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const admin = createAdminSupabase();
-  if (!admin) return NextResponse.json({ error: "Server is not configured" }, { status: 500 });
-  const { error } = await admin.auth.admin.deleteUser(auth.user.id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  db.prepare("delete from users where id=?").run(user.id);
+  await destroySession();
   return NextResponse.json({ deleted: true });
 }

@@ -1,8 +1,23 @@
+import "server-only";
+
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 function key() {
-  const source = process.env.DATA_ENCRYPTION_KEY;
-  if (!source) throw new Error("DATA_ENCRYPTION_KEY is not configured");
+  let source = process.env.DATA_ENCRYPTION_KEY;
+  if (!source) {
+    const dataDir = ".data";
+    const keyPath = ".data/encryption.key";
+    mkdirSync(/*turbopackIgnore: true*/ dataDir, { recursive: true, mode: 0o700 });
+    if (!existsSync(/*turbopackIgnore: true*/ keyPath)) {
+      writeFileSync(
+        /*turbopackIgnore: true*/ keyPath,
+        randomBytes(32).toString("base64url"),
+        { mode: 0o600 },
+      );
+    }
+    source = readFileSync(/*turbopackIgnore: true*/ keyPath, "utf8").trim();
+  }
   return createHash("sha256").update(source).digest();
 }
 
@@ -24,3 +39,4 @@ export function decrypt(value: string) {
     decipher.final(),
   ]).toString("utf8");
 }
+import "server-only";

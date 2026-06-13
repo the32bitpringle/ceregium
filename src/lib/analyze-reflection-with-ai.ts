@@ -1,16 +1,13 @@
-import OpenAI from "openai";
-import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 import { analyzeReflection } from "@/lib/analyze-reflection";
 import { createBalancePairs } from "@/lib/balancing";
 import type { AnalysisResult, ReflectionRatings } from "@/lib/types";
 
-const modelAnalysisSchema = z.object({
+const resultSchema = z.object({
   pressure: z.number().min(0).max(100),
   confidence: z.number().min(0).max(1),
   themes: z.array(z.string().min(1).max(40)).max(6),
   protectiveFactors: z.array(z.string().min(1).max(60)).max(5),
-  temporalContext: z.enum(["current", "historical", "hypothetical", "quoted", "mixed"]),
   immediateSafetyConcern: z.boolean(),
   summary: z.string().min(1).max(220),
 });
@@ -21,36 +18,50 @@ export async function analyzeReflectionWithAI(
   analysisEnabled: boolean,
 ): Promise<AnalysisResult> {
   const deterministic = analyzeReflection(text, ratings, analysisEnabled);
-  if (!analysisEnabled || !process.env.OPENAI_API_KEY) {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!analysisEnabled || !apiKey) {
     return { ...deterministic, model: analysisEnabled ? "deterministic-fallback" : "disabled" };
   }
 
   try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const model = process.env.OPENAI_MODEL || "gpt-5.5";
-    const response = await openai.responses.parse({
-      model,
-      reasoning: { effort: "low" },
-      instructions: [
-        "Analyze a student's private daily reflection for non-diagnostic wellbeing patterns.",
-        "Do not diagnose burnout, depression, anxiety, or any medical condition.",
-        "Distinguish current experience from quotations, lyrics, jokes, history, and hypotheticals.",
-        "Use neutral language. A single difficult day is not a sustained pattern.",
-        "Set immediateSafetyConcern only for a plausible current and direct risk of imminent self-harm or harm.",
-        "Do not repeat names or sensitive quotations in the summary.",
-      ].join(" "),
-      input: JSON.stringify({ reflection: text, ratings }),
-      text: {
-        format: zodTextFormat(modelAnalysisSchema, "reflection_analysis"),
-        verbosity: "low",
+    const model = process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini";
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": process.env.APP_URL || "http://localhost:3000",
+        "X-Title": "Ceregium",
       },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: [
+              "Analyze a student's private daily reflection for non-diagnostic wellbeing patterns.",
+              "Return JSON with pressure, confidence, themes, protectiveFactors, immediateSafetyConcern, summary.",
+              "Do not diagnose burnout, depression, anxiety, or any medical condition.",
+              "A single difficult day is not a sustained pattern.",
+              "Set immediateSafetyConcern only for plausible current direct risk of imminent harm.",
+              "Use neutral language and do not repeat names or sensitive quotations.",
+            ].join(" "),
+          },
+          { role: "user", content: JSON.stringify({ reflection: text, ratings }) },
+        ],
+      }),
+      signal: AbortSignal.timeout(15_000),
     });
-
-    const parsed = response.output_parsed;
-    if (!parsed) return { ...deterministic, model: "deterministic-fallback" };
-
-    const combinedScore = Math.round(deterministic.score * 0.55 + parsed.pressure * 0.45);
-    const score = Math.max(0, Math.min(100, combinedScore));
+    if (!response.ok) throw new Error(`OpenRouter returned ${response.status}`);
+    const body = await response.json();
+    const content = body.choices?.[0]?.message?.content;
+    const parsed = resultSchema.parse(JSON.parse(content));
+    const score = Math.max(
+      0,
+      Math.min(100, Math.round(deterministic.score * 0.55 + parsed.pressure * 0.45)),
+    );
     const status =
       score >= 85 && parsed.immediateSafetyConcern
         ? "critical"
@@ -59,12 +70,10 @@ export async function analyzeReflectionWithAI(
           : score >= 48
             ? "watch"
             : "steady";
-
     const themes = [...new Set([...deterministic.themes, ...parsed.themes])].slice(0, 6);
     const protectiveFactors = [
       ...new Set([...deterministic.protectiveFactors, ...parsed.protectiveFactors]),
     ].slice(0, 5);
-
     return {
       status,
       score,
@@ -77,7 +86,8 @@ export async function analyzeReflectionWithAI(
       model,
     };
   } catch (error) {
-    console.error("OpenAI reflection analysis failed", error);
+    console.error("OpenRouter reflection analysis failed", error);
     return { ...deterministic, model: "deterministic-fallback" };
   }
 }
+import "server-only";

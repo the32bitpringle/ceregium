@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Ceregium Companion</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Ceregium Companion</h1>
+      <label>Local app URL<input id="appUrl" value="http://localhost:3000" /></label>
+      <label>Pairing key<input id="token" type="password" /></label>
+      <button id="save">Save connection</button>
+      <hr />
+      <p>Open a classroom or assignment page, then review the detected items before import.</p>
+      <button id="scan">Scan current page</button>
+      <div id="items"></div>
+      <button id="import" disabled>Import selected assignments</button>
+      <p id="status"></p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -52,13 +52,10 @@ export function analyzeReflection(
     Math.min(94, Math.round(ratingPressure * 0.72 + themes.length * 6 - protectiveFactors.length * 3)),
   );
 
-  const status =
-    score >= 85 ? "critical" : score >= 68 ? "elevated" : score >= 48 ? "watch" : "steady";
+  const status = score >= 68 ? "elevated" : score >= 48 ? "watch" : "steady";
 
   const summary =
-    status === "critical"
-      ? "Several signals suggest a substantial change from a sustainable routine."
-      : status === "elevated"
+    status === "elevated"
         ? "Your day shows signs of high demand with limited recovery."
         : status === "watch"
           ? "Some parts of your routine may be using more capacity than usual."

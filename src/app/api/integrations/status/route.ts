@@ -1,15 +1,13 @@
 import { NextResponse } from "next/server";
-import { hasSupabaseConfig } from "@/lib/runtime-config";
-import { requireUser } from "@/lib/supabase";
+import { db } from "@/lib/db";
+import { currentUser } from "@/lib/local-auth";
 
-export async function GET(request: Request) {
-  if (!hasSupabaseConfig()) return NextResponse.json({ mode: "demo", providers: [] });
-  const auth = await requireUser(request);
-  if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const { data, error } = await auth.supabase
-    .from("connections")
-    .select("provider, last_synced_at, scopes")
-    .eq("user_id", auth.user.id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ mode: "configured", providers: data ?? [] });
+export async function GET() {
+  const user = await currentUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const pairings = db.prepare(`
+    select id,label,last_used_at,created_at from browser_pairings
+    where user_id=? and revoked_at is null order by created_at desc
+  `).all(user.id);
+  return NextResponse.json({ pairings });
 }
