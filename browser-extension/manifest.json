@@ -1,10 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Ceregium Browser Companion",
-  "version": "0.1.0",
-  "description": "Imports user-reviewed assignment metadata into a local Ceregium instance.",
-  "permissions": ["activeTab", "storage", "scripting"],
-  "host_permissions": ["http://localhost:3000/*", "http://127.0.0.1:3000/*"],
+  "version": "0.2.0",
+  "description": "Privately summarizes browser activity and imports user-reviewed assignments into Ceregium.",
+  "permissions": ["activeTab", "alarms", "idle", "storage", "scripting", "tabs"],
+  "host_permissions": ["http://localhost/*", "http://127.0.0.1/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_popup": "popup.html"
   }

@@ -14,8 +14,11 @@ Ceregium is an early-warning and planning tool, not a medical diagnostic service
 - longitudinal burnout-pattern assessment with evidence and matchstick visualization
 - personalized workload tradeoffs based on deadlines and student-provided grade impact
 - manual assignments with add, edit-impact, and delete operations
-- browser companion import with review, scoped pairing keys, and revocation
+- opt-in browser activity monitoring using aggregate category minutes, late-night use,
+  long-session length, breaks, and tab-switch counts
+- browser companion assignment import with review, scoped pairing keys, and revocation
 - personalized exercises for breathing, grounding, recovery, workload, sleep, and connection
+- AI-generated 48-hour schedule-easing plans with deterministic fallback and academic guardrails
 - export, permanent account deletion, automatic session cleanup, rate limiting, and security headers
 - responsive desktop/mobile interface and automated safety-sensitive logic tests
 
@@ -48,10 +51,13 @@ Without a key, the deterministic analyzer remains fully functional.
 3. Choose **Load unpacked** and select `browser-extension/`.
 4. In Ceregium, open **Integrations** and create a pairing key.
 5. Paste the local app URL and pairing key into the extension.
-6. Open a classroom or assignment page, scan it, review detected assignments, and import.
+6. Explicitly enable activity monitoring if desired. It is off by default.
+7. Open a classroom or assignment page, scan it, review detected assignments, and import.
 
 The extension receives no Ceregium cookie, school password, or OAuth token. A pairing key
-can only import assignment metadata and can be revoked from Ceregium.
+can only import assignment metadata and send coarse daily activity summaries. The extension
+does not send page text, exact URLs, domains, searches, or messages. Monitoring can be paused
+and its local summaries can be deleted from the popup.
 
 The included manifest allows `localhost:3000` and `127.0.0.1:3000`. Add the eventual
 deployment origin to `host_permissions` before deploying the extension.

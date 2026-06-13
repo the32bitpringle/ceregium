@@ -5,16 +5,67 @@ const token = document.querySelector("#token");
 const items = document.querySelector("#items");
 const status = document.querySelector("#status");
 const importButton = document.querySelector("#import");
+const monitorEnabled = document.querySelector("#monitorEnabled");
+const activeMinutes = document.querySelector("#activeMinutes");
+const lateMinutes = document.querySelector("#lateMinutes");
+const longestSession = document.querySelector("#longestSession");
+const exercise = document.querySelector("#exercise");
 
-chrome.storage.local.get(["appUrl", "token"], (saved) => {
+chrome.storage.local.get(["appUrl", "token", "monitorEnabled", "activityDays"], (saved) => {
   if (saved.appUrl) appUrl.value = saved.appUrl;
   if (saved.token) token.value = saved.token;
+  monitorEnabled.checked = saved.monitorEnabled === true;
+  renderActivity(saved.activityDays || {});
 });
 
 document.querySelector("#save").addEventListener("click", () => {
   chrome.storage.local.set({ appUrl: appUrl.value.replace(/\/$/, ""), token: token.value });
   status.textContent = "Connection saved locally in this browser.";
 });
+
+monitorEnabled.addEventListener("change", async () => {
+  await chrome.storage.local.set({ monitorEnabled: monitorEnabled.checked });
+  await chrome.runtime.sendMessage({ type: "refreshActivity" });
+  status.textContent = monitorEnabled.checked
+    ? "Activity monitoring is on. Only aggregate signals will sync."
+    : "Activity monitoring is paused.";
+});
+
+document.querySelector("#syncActivity").addEventListener("click", async () => {
+  const result = await chrome.runtime.sendMessage({ type: "syncActivity" });
+  status.textContent = result.ok ? "Activity summary synced." : result.error;
+});
+
+document.querySelector("#clearActivity").addEventListener("click", async () => {
+  await chrome.storage.local.remove(["activityDays", "monitorState", "lastSyncAt"]);
+  renderActivity({});
+  status.textContent = "Local activity summaries cleared.";
+});
+
+function renderActivity(days) {
+  const today = days[localDate()] || {
+    activeMinutes: 0,
+    lateNightMinutes: 0,
+    longestSessionMinutes: 0,
+    breakCount: 0,
+  };
+  activeMinutes.textContent = today.activeMinutes;
+  lateMinutes.textContent = today.lateNightMinutes;
+  longestSession.textContent = today.longestSessionMinutes;
+  if (today.longestSessionMinutes >= 120) {
+    exercise.textContent = "Try a 10-minute screen-free reset: stand up, drink water, and move before choosing the next task.";
+  } else if (today.lateNightMinutes >= 45) {
+    exercise.textContent = "Set a stopping time tonight. Write tomorrow’s first step, then lower lights and avoid starting another optional task.";
+  } else if (today.activeMinutes >= 180 && today.breakCount <= 1) {
+    exercise.textContent = "Take a 3-minute grounding break: name 5 things you see, 4 you feel, and 3 you hear.";
+  } else {
+    exercise.textContent = "Paced breathing: inhale for 4 seconds and exhale for 6 seconds, ten times.";
+  }
+}
+
+function localDate(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
 
 document.querySelector("#scan").addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });

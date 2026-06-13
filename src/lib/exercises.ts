@@ -1,4 +1,9 @@
-import type { PatternAssessment, Reflection, WellbeingExercise } from "@/lib/types";
+import type {
+  BrowserActivityDay,
+  PatternAssessment,
+  Reflection,
+  WellbeingExercise,
+} from "@/lib/types";
 
 const exercises: Record<string, WellbeingExercise> = {
   breathing: {
@@ -48,6 +53,7 @@ const exercises: Record<string, WellbeingExercise> = {
 export function recommendedExercises(
   reflections: Reflection[],
   assessment: PatternAssessment,
+  activity: BrowserActivityDay[] = [],
 ): WellbeingExercise[] {
   const themes = new Set(reflections.slice(0, 7).flatMap((entry) => entry.analysis.themes));
   const selected: WellbeingExercise[] = [];
@@ -56,6 +62,8 @@ export function recommendedExercises(
   if (themes.has("high workload") || themes.has("low motivation")) selected.push(exercises.task);
   if (themes.has("late work") || themes.has("reduced sleep")) selected.push(exercises.sleep);
   if (themes.has("social withdrawal")) selected.push(exercises.connection);
+  if (activity.some((day) => day.longestSessionMinutes >= 120)) selected.push(exercises.recovery);
+  if (activity.some((day) => day.lateNightMinutes >= 45)) selected.push(exercises.sleep);
   selected.push(exercises.grounding);
   return [...new Map(selected.map((exercise) => [exercise.id, exercise])).values()].slice(0, 4);
 }

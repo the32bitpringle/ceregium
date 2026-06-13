@@ -12,6 +12,32 @@
       <label>Local app URL<input id="appUrl" value="http://localhost:3000" /></label>
       <label>Pairing key<input id="token" type="password" /></label>
       <button id="save">Save connection</button>
+      <section class="monitor">
+        <div class="monitor-heading">
+          <div>
+            <h2>Activity signals</h2>
+            <p>Optional, private browser-level patterns.</p>
+          </div>
+          <label class="switch">
+            <input id="monitorEnabled" type="checkbox" />
+            <span>Monitor</span>
+          </label>
+        </div>
+        <p class="privacy-note">
+          Collects only category minutes, late-night use, long sessions, breaks, and tab-switch
+          counts. It never sends page text, exact URLs, domains, searches, or messages.
+        </p>
+        <div class="signal-summary">
+          <div><strong id="activeMinutes">0</strong><span>active min</span></div>
+          <div><strong id="lateMinutes">0</strong><span>late-night min</span></div>
+          <div><strong id="longestSession">0</strong><span>longest session</span></div>
+        </div>
+        <div id="exercise"></div>
+        <div class="button-row">
+          <button id="syncActivity" class="secondary">Sync now</button>
+          <button id="clearActivity" class="secondary">Clear local data</button>
+        </div>
+      </section>
       <hr />
       <p>Open a classroom or assignment page, then review the detected items before import.</p>
       <button id="scan">Scan current page</button>

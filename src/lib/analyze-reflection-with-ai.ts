@@ -1,3 +1,5 @@
+import "server-only";
+
 import { z } from "zod";
 import { analyzeReflection } from "@/lib/analyze-reflection";
 import { createBalancePairs } from "@/lib/balancing";
@@ -90,4 +92,3 @@ export async function analyzeReflectionWithAI(
     return { ...deterministic, model: "deterministic-fallback" };
   }
 }
-import "server-only";

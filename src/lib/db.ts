@@ -85,9 +85,38 @@ function openDatabase() {
       updated_at text not null
     );
 
+    create table if not exists browser_activity_daily (
+      user_id text not null references users(id) on delete cascade,
+      local_date text not null,
+      active_minutes integer not null default 0,
+      education_minutes integer not null default 0,
+      productivity_minutes integer not null default 0,
+      social_minutes integer not null default 0,
+      entertainment_minutes integer not null default 0,
+      other_minutes integer not null default 0,
+      late_night_minutes integer not null default 0,
+      longest_session_minutes integer not null default 0,
+      tab_switches integer not null default 0,
+      break_count integer not null default 0,
+      updated_at text not null,
+      primary key(user_id, local_date)
+    );
+
+    create table if not exists schedule_plans (
+      id text primary key,
+      user_id text not null references users(id) on delete cascade,
+      fingerprint text not null,
+      assessment_score integer not null,
+      plan_json text not null,
+      created_at text not null,
+      unique(user_id, fingerprint)
+    );
+
     create index if not exists reflections_user_date_idx on reflections(user_id, local_date desc);
     create index if not exists workload_user_due_idx on workload_items(user_id, due_at);
     create index if not exists sessions_expiry_idx on sessions(expires_at);
+    create index if not exists activity_user_date_idx on browser_activity_daily(user_id, local_date desc);
+    create index if not exists plans_user_date_idx on schedule_plans(user_id, created_at desc);
   `);
 
   const now = new Date();

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { assessBurnoutPattern } from "../src/lib/burnout-assessment";
-import type { Reflection, WorkloadItem } from "../src/lib/types";
+import type { BrowserActivityDay, Reflection, WorkloadItem } from "../src/lib/types";
 
 function reflection(id: string, score: number): Reflection {
   return {
@@ -45,4 +45,24 @@ test("flags a likely developing burnout pattern from repeated demand and low rec
   assert.ok(result.score >= 72);
   assert.match(result.conclusion, /may be consistent with burnout developing/i);
   assert.ok(result.evidence.length >= 3);
+});
+
+test("detects a possible pattern from repeated aggregate browser signals without page history", () => {
+  const activity: BrowserActivityDay[] = ["11", "12", "13"].map((day) => ({
+    localDate: `2026-06-${day}`,
+    activeMinutes: 320,
+    educationMinutes: 180,
+    productivityMinutes: 60,
+    socialMinutes: 30,
+    entertainmentMinutes: 20,
+    otherMinutes: 30,
+    lateNightMinutes: 70,
+    longestSessionMinutes: 150,
+    tabSwitches: 600,
+    breakCount: 1,
+  }));
+  const result = assessBurnoutPattern([], [], activity);
+  assert.equal(result.likelihood, "likely");
+  assert.match(result.evidence.join(" "), /late-night use/i);
+  assert.match(result.evidence.join(" "), /uninterrupted browser session/i);
 });

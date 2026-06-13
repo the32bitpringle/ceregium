@@ -22,11 +22,24 @@ export async function GET() {
   const pairings = db.prepare(
     "select id,label,last_used_at,created_at,revoked_at from browser_pairings where user_id=?",
   ).all(user.id);
+  const browserActivity = db.prepare(
+    "select * from browser_activity_daily where user_id=? order by local_date desc",
+  ).all(user.id);
+  const schedulePlans = (db.prepare(
+    "select id,assessment_score,plan_json,created_at from schedule_plans where user_id=? order by created_at desc",
+  ).all(user.id) as Array<Record<string, unknown>>).map((row) => ({
+    id: row.id,
+    assessmentScore: row.assessment_score,
+    plan: jsonParse(String(row.plan_json), {}),
+    createdAt: row.created_at,
+  }));
   return NextResponse.json({
     exportedAt: new Date().toISOString(),
     profile: user,
     reflections,
     workload,
     browserPairings: pairings,
+    browserActivity,
+    schedulePlans,
   });
 }

@@ -27,15 +27,17 @@ import { recommendedExercises } from "@/lib/exercises";
 import type {
   AppSettings,
   AnalysisResult,
+  BrowserActivityDay,
   Integration,
   Reflection,
   ReflectionRatings,
+  ScheduleEasePlan,
   View,
   WorkloadItem,
 } from "@/lib/types";
 
 const integrations: Integration[] = [
-  { name: "Browser companion", category: "Browser", status: "available", detail: "Import assignments you review from classroom pages" },
+  { name: "Browser companion", category: "Browser", status: "available", detail: "Summarize opt-in activity patterns and import assignments you review" },
   { name: "Manual entry", category: "School", status: "connected", detail: "Add assignments directly without another account" },
 ];
 
@@ -253,6 +255,8 @@ export default function Home() {
   const [manualImpact, setManualImpact] =
     useState<NonNullable<WorkloadItem["gradeImpact"]>>("unknown");
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
+  const [activity, setActivity] = useState<BrowserActivityDay[]>([]);
+  const [schedulePlan, setSchedulePlan] = useState<ScheduleEasePlan | null>(null);
   const [actionMessage, setActionMessage] = useState("");
 
   useEffect(() => {
@@ -297,25 +301,46 @@ export default function Home() {
       fetch("/api/integrations/status").then((response) => response.json()),
       fetch("/api/workload").then((response) => response.json()),
       fetch("/api/settings").then((response) => response.json()),
+      fetch("/api/browser/activity").then((response) => response.json()),
     ])
-      .then(([reflectionData, integrationData, workloadData, settingsData]) => {
+      .then(([reflectionData, integrationData, workloadData, settingsData, activityData]) => {
         setReflections(reflectionData.reflections ?? []);
         setPairings(integrationData.pairings ?? []);
         setConnected(integrationData.pairings?.length ? ["Manual entry", "Browser companion"] : ["Manual entry"]);
         setWorkload(workloadData.items ?? []);
+        setActivity(activityData.activity ?? []);
         if (settingsData.settings) setSettings(settingsData.settings);
       })
       .catch(() => setStartupError("Ceregium could not load your private workspace."));
   }, [user]);
 
+  useEffect(() => {
+    if (!user) return;
+    let activeRequest = true;
+    const refreshActivity = () => {
+      fetch("/api/browser/activity")
+        .then((response) => response.json())
+        .then((result) => {
+          if (activeRequest) setActivity(result.activity ?? []);
+        });
+    };
+    const timer = window.setInterval(refreshActivity, 5 * 60 * 1000);
+    window.addEventListener("focus", refreshActivity);
+    return () => {
+      activeRequest = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshActivity);
+    };
+  }, [user]);
+
   const latest = reflections[0]?.analysis;
   const patternAssessment = useMemo(
-    () => assessBurnoutPattern(reflections, workload),
-    [reflections, workload],
+    () => assessBurnoutPattern(reflections, workload, activity),
+    [reflections, workload, activity],
   );
   const exercises = useMemo(
-    () => recommendedExercises(reflections, patternAssessment),
-    [reflections, patternAssessment],
+    () => recommendedExercises(reflections, patternAssessment, activity),
+    [reflections, patternAssessment, activity],
   );
   const upcomingWork = useMemo(
     () => workload.filter((item) => item.status !== "submitted").slice(0, 3),
@@ -343,6 +368,37 @@ export default function Home() {
     );
     return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
   }, [reflections]);
+  const scheduleInputKey = useMemo(
+    () =>
+      JSON.stringify({
+        score: patternAssessment.score,
+        reflections: reflections.map((entry) => entry.id),
+        workload: workload.map((item) => [item.id, item.dueAt, item.gradeImpact]),
+        activity: activity.map((day) => [
+          day.localDate,
+          day.activeMinutes,
+          day.lateNightMinutes,
+        ]),
+      }),
+    [activity, patternAssessment.score, reflections, workload],
+  );
+
+  useEffect(() => {
+    if (!user || patternAssessment.score < 52) return;
+    let activeRequest = true;
+    fetch("/api/schedule-plan", { method: "POST" })
+      .then(async (response) => {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error ?? "Could not create schedule plan.");
+        if (activeRequest) setSchedulePlan(result.plan);
+      })
+      .catch((error) => {
+        if (activeRequest) setActionMessage(String(error.message || error));
+      });
+    return () => {
+      activeRequest = false;
+    };
+  }, [user, patternAssessment.score, scheduleInputKey]);
 
   async function submitReflection(event: FormEvent) {
     event.preventDefault();
@@ -389,6 +445,14 @@ export default function Home() {
     setPairingToken("");
     setConnected(["Manual entry"]);
     setActionMessage("Browser pairing revoked.");
+  }
+
+  async function deleteBrowserActivity() {
+    const response = await fetch("/api/browser/activity", { method: "DELETE" });
+    if (!response.ok) return setActionMessage("Could not delete synced activity.");
+    setActivity([]);
+    setSchedulePlan(null);
+    setActionMessage("Synced browser activity and generated schedule plans deleted.");
   }
 
   async function updateGradeImpact(
@@ -765,6 +829,29 @@ export default function Home() {
                 ))}
               </div>
             </section>
+
+            {patternAssessment.score >= 52 && schedulePlan && (
+              <section className="schedule-plan">
+                <div className="section-title">
+                  <h2>Possible way to ease the schedule</h2>
+                  <span>Advisory 48-hour plan</span>
+                </div>
+                <p>{schedulePlan.summary}</p>
+                <div className="schedule-plan-actions">
+                  {schedulePlan.actions.map((action) => (
+                    <article key={`${action.kind}-${action.title}`}>
+                      <span>{action.kind}</span>
+                      <div>
+                        <strong>{action.title}</strong>
+                        <p>{action.reason}</p>
+                        <small>{action.timing}</small>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+                <p className="plan-guardrail"><ShieldCheck size={16} /> {schedulePlan.guardrail}</p>
+              </section>
+            )}
           </div>
         )}
 
@@ -891,8 +978,25 @@ export default function Home() {
                 <span><BookOpen size={17} /> Classroom workload</span>
                 <span><NotebookPen size={17} /> Daily reflections</span>
                 <span><CalendarDays size={17} /> Schedule density</span>
+                <span><Activity size={17} /> Aggregate browser activity</span>
               </div>
             </section>
+
+            {activity[0] && (
+              <section className="activity-summary">
+                <div className="section-title">
+                  <h2>Browser activity summary</h2>
+                  <span>{activity[0].localDate}</span>
+                </div>
+                <div>
+                  <p><strong>{activity[0].activeMinutes}</strong><span>active minutes</span></p>
+                  <p><strong>{activity[0].lateNightMinutes}</strong><span>late-night minutes</span></p>
+                  <p><strong>{activity[0].longestSessionMinutes}</strong><span>longest session</span></p>
+                  <p><strong>{activity[0].breakCount}</strong><span>meaningful breaks</span></p>
+                </div>
+                <small>Only aggregate counts are stored. Ceregium does not receive page text, URLs, domains, searches, or messages.</small>
+              </section>
+            )}
 
             <section className="section-block">
               <div className="section-title">
@@ -975,8 +1079,9 @@ export default function Home() {
                 <h2>Browser companion</h2>
                 <p>
                   Load the unpacked extension from <code>browser-extension/</code>, create a pairing
-                  key below, then paste it into the extension. The extension scans the current page
-                  only when you ask and requires review before import.
+                  key below, then paste it into the extension. Assignment scans still require review.
+                  Optional continuous monitoring sends only daily category minutes, late-night use,
+                  session length, breaks, and tab-switch counts.
                 </p>
               </div>
             </section>
@@ -1005,7 +1110,7 @@ export default function Home() {
                     <strong>{pairing.label}</strong>
                     <span>
                       {pairing.last_used_at
-                        ? `Last import ${new Date(pairing.last_used_at).toLocaleString()}`
+                        ? `Last activity ${new Date(pairing.last_used_at).toLocaleString()}`
                         : "Not used yet"}
                     </span>
                   </div>
@@ -1014,6 +1119,11 @@ export default function Home() {
                   </button>
                 </div>
               ))}
+              {activity.length > 0 && (
+                <button className="secondary-button" onClick={deleteBrowserActivity}>
+                  Delete synced activity
+                </button>
+              )}
             </section>
           </div>
         )}

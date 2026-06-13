@@ -53,12 +53,43 @@ export interface PatternAssessment {
   recommendation: string;
 }
 
+export interface BrowserActivityDay {
+  localDate: string;
+  activeMinutes: number;
+  educationMinutes: number;
+  productivityMinutes: number;
+  socialMinutes: number;
+  entertainmentMinutes: number;
+  otherMinutes: number;
+  lateNightMinutes: number;
+  longestSessionMinutes: number;
+  tabSwitches: number;
+  breakCount: number;
+}
+
 export interface WellbeingExercise {
   id: string;
   title: string;
   duration: string;
   reason: string;
   steps: string[];
+}
+
+export interface SchedulePlanAction {
+  title: string;
+  reason: string;
+  timing: string;
+  assignmentId?: string;
+  kind: "protect" | "reduce" | "move" | "ask" | "recover";
+}
+
+export interface ScheduleEasePlan {
+  id?: string;
+  summary: string;
+  actions: SchedulePlanAction[];
+  guardrail: string;
+  model: string;
+  createdAt?: string;
 }
 
 export interface Integration {

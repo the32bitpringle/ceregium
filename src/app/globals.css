@@ -758,6 +758,110 @@ button:disabled {
   padding-left: 18px;
 }
 
+.schedule-plan {
+  margin-top: 24px;
+  border: 1px solid var(--line);
+  background: var(--white);
+  padding: 24px;
+}
+
+.schedule-plan > p {
+  max-width: 760px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.schedule-plan-actions {
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.schedule-plan-actions article {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 18px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--soft);
+}
+
+.schedule-plan-actions article > span {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.schedule-plan-actions strong,
+.schedule-plan-actions p,
+.schedule-plan-actions small {
+  display: block;
+}
+
+.schedule-plan-actions p {
+  margin: 5px 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.schedule-plan-actions small {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.schedule-plan .plan-guardrail {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 16px;
+  font-size: 13px;
+}
+
+.schedule-plan .plan-guardrail svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.activity-summary {
+  margin: 24px 0;
+  border: 1px solid var(--line);
+  background: var(--white);
+}
+
+.activity-summary > div:not(.section-title) {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.activity-summary > div:not(.section-title) p {
+  margin: 0;
+  padding: 18px 22px;
+  border-right: 1px solid var(--soft);
+}
+
+.activity-summary > div:not(.section-title) p:last-child {
+  border-right: 0;
+}
+
+.activity-summary strong,
+.activity-summary span {
+  display: block;
+}
+
+.activity-summary strong {
+  font-size: 24px;
+}
+
+.activity-summary span,
+.activity-summary small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.activity-summary small {
+  display: block;
+  border-top: 1px solid var(--soft);
+  padding: 12px 22px;
+}
+
 .empty-state {
   margin: 0;
   padding: 22px 23px;
@@ -1607,6 +1711,18 @@ textarea,
     border-right: 0;
   }
 
+  .activity-summary > div:not(.section-title) {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .activity-summary > div:not(.section-title) p:nth-child(2) {
+    border-right: 0;
+  }
+
+  .activity-summary > div:not(.section-title) p:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--soft);
+  }
+
   .manual-workload-form button {
     width: 100%;
   }
@@ -1678,6 +1794,11 @@ textarea,
 
   .capacity-figure {
     padding: 29px 23px;
+  }
+
+  .schedule-plan-actions article {
+    grid-template-columns: 1fr;
+    gap: 6px;
   }
 
   .section-title {

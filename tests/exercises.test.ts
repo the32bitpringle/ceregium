@@ -46,3 +46,26 @@ test("always offers a grounding exercise without overstating a diagnosis", () =>
   const result = recommendedExercises([], { ...assessment, likelihood: "insufficient", score: 0 });
   assert.deepEqual(result.map((exercise) => exercise.id), ["five-senses"]);
 });
+
+test("uses aggregate late-night and long-session signals to recommend recovery exercises", () => {
+  const result = recommendedExercises(
+    [],
+    assessment,
+    [{
+      localDate: "2026-06-13",
+      activeMinutes: 300,
+      educationMinutes: 180,
+      productivityMinutes: 50,
+      socialMinutes: 30,
+      entertainmentMinutes: 20,
+      otherMinutes: 20,
+      lateNightMinutes: 60,
+      longestSessionMinutes: 140,
+      tabSwitches: 240,
+      breakCount: 1,
+    }],
+  );
+  const ids = result.map((exercise) => exercise.id);
+  assert.ok(ids.includes("screen-free-reset"));
+  assert.ok(ids.includes("wind-down-boundary"));
+});
