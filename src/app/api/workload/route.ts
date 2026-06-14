@@ -2,8 +2,11 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { rejectCrossSite } from "@/lib/api-security";
 import { workloadCreateSchema, workloadUpdateSchema } from "@/lib/api-schemas";
+import { mapActivityDay } from "@/lib/activity";
 import { db } from "@/lib/db";
 import { currentUser } from "@/lib/local-auth";
+import { computeWorkloadStrain } from "@/lib/workload-strain";
+import type { WorkloadItem } from "@/lib/types";
 
 function mapItem(row: Record<string, unknown>) {
   return {
@@ -24,7 +27,13 @@ export async function GET() {
   const rows = db.prepare(
     "select * from workload_items where user_id=? order by due_at asc limit 200",
   ).all(user.id) as Array<Record<string, unknown>>;
-  return NextResponse.json({ items: rows.map(mapItem) });
+  const items = rows.map(mapItem) as WorkloadItem[];
+  const activityRow = db.prepare(
+    "select * from browser_activity_daily where user_id=? order by local_date desc limit 1",
+  ).get(user.id) as Record<string, unknown> | undefined;
+  const today = activityRow ? mapActivityDay(activityRow) : undefined;
+  const strain = computeWorkloadStrain(items, today);
+  return NextResponse.json({ items, strain });
 }
 
 export async function PATCH(request: Request) {

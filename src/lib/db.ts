@@ -112,6 +112,15 @@ function openDatabase() {
       unique(user_id, fingerprint)
     );
 
+    create table if not exists detected_integrations (
+      user_id text not null references users(id) on delete cascade,
+      service text not null,
+      category text not null,
+      first_seen text not null,
+      last_seen text not null,
+      primary key(user_id, service)
+    );
+
     create index if not exists reflections_user_date_idx on reflections(user_id, local_date desc);
     create index if not exists workload_user_due_idx on workload_items(user_id, due_at);
     create index if not exists sessions_expiry_idx on sessions(expires_at);

@@ -1375,6 +1375,36 @@ textarea,
 .heading-actions {
   display: flex;
   gap: 10px;
+  align-items: center;
+}
+
+.strain-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border: 1px solid var(--ink);
+  white-space: nowrap;
+}
+
+.strain-badge.strain-light {
+  background: #e7f3ec;
+  color: #1f5d47;
+}
+
+.strain-badge.strain-moderate {
+  background: #fdf3e0;
+  color: #8a5a12;
+}
+
+.strain-badge.strain-heavy {
+  background: #fbe5e2;
+  color: #93341f;
+}
+
+.strain-drivers {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .manual-workload-form {

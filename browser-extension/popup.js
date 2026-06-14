@@ -37,7 +37,13 @@ document.querySelector("#syncActivity").addEventListener("click", async () => {
 });
 
 document.querySelector("#clearActivity").addEventListener("click", async () => {
-  await chrome.storage.local.remove(["activityDays", "monitorState", "lastSyncAt"]);
+  await chrome.storage.local.remove([
+    "activityDays",
+    "monitorState",
+    "lastSyncAt",
+    "scannedPages",
+    "reportedServices",
+  ]);
   renderActivity({});
   status.textContent = "Local activity summaries cleared.";
 });
@@ -79,7 +85,7 @@ document.querySelector("#scan").addEventListener("click", async () => {
         const date = text.match(datePattern)?.[0];
         const heading = element.querySelector("h1,h2,h3,h4,a,strong,[role=heading]")?.textContent?.trim();
         if (!date || !heading || heading.length > 160) return null;
-        const parsed = new Date(date);
+        const parsed = new Date(date.replace(/\s+at\s+/i, " "));
         if (Number.isNaN(parsed.getTime())) return null;
         return {
           externalId: `${location.hostname}-${index}-${heading.slice(0, 40)}`,

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { rateLimit, rateLimited } from "@/lib/api-security";
+import { inferGradeImpact } from "@/lib/workload-inference";
 
 const itemSchema = z.object({
   externalId: z.string().trim().min(1).max(240),
@@ -88,7 +89,7 @@ export async function POST(request: Request) {
         dueAt.toISOString(),
         dueAt < new Date() ? "overdue" : "upcoming",
         item.pointsPossible ?? null,
-        "unknown",
+        inferGradeImpact(item.title, item.pointsPossible),
         now,
         now,
       );

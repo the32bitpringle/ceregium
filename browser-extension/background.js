@@ -1,5 +1,7 @@
 const ACTIVITY_KEY = "activityDays";
 const STATE_KEY = "monitorState";
+const SCANNED_KEY = "scannedPages";
+const SERVICES_KEY = "reportedServices";
 const TICK_ALARM = "ceregium-activity-tick";
 const SYNC_MINUTES = 30;
 let operation = Promise.resolve();
@@ -51,18 +53,59 @@ function emptyDay(date = localDate()) {
   };
 }
 
-function categorize(url) {
-  if (!url || !url.startsWith("http")) return "other";
-  let hostname = "";
+function hostnameOf(url) {
+  if (!url || !url.startsWith("http")) return "";
   try {
-    hostname = new URL(url).hostname.toLowerCase();
+    return new URL(url).hostname.toLowerCase();
   } catch {
-    return "other";
+    return "";
   }
+}
+
+function categorize(url) {
+  const hostname = hostnameOf(url);
+  if (!hostname) return "other";
   for (const [category, fragments] of Object.entries(categories)) {
     if (fragments.some((fragment) => hostname.includes(fragment))) return category;
   }
   return "other";
+}
+
+// The recognized service "slug" is the matched fragment itself. Only education and
+// productivity services map to integrations; social/entertainment do not. Only the
+// slug (e.g. "canvas") is ever sent — never the full hostname, URL, or path.
+function matchedService(url) {
+  const hostname = hostnameOf(url);
+  if (!hostname) return null;
+  for (const group of [categories.education, categories.productivity]) {
+    const fragment = group.find((value) => hostname.includes(value));
+    if (fragment) return fragment;
+  }
+  return null;
+}
+
+// Injected into the active tab. Self-contained: reads only assignment-like
+// headings paired with a parseable due date. Returns metadata, never page text.
+function assignmentScanFunction() {
+  const datePattern = /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}(?:,\s*\d{4})?(?:\s+at\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)?/i;
+  const candidates = [...document.querySelectorAll("article, li, tr, [role=row], .assignment, .coursework")];
+  return candidates.slice(0, 200).map((element, index) => {
+    const text = element.textContent?.replace(/\s+/g, " ").trim() || "";
+    const date = text.match(datePattern)?.[0];
+    const heading = element.querySelector("h1,h2,h3,h4,a,strong,[role=heading]")?.textContent?.trim();
+    if (!date || !heading || heading.length > 160) return null;
+    // "Dec 5, 2026 at 11:59 PM" is not parseable by Date; drop the "at" so the
+    // captured due time is kept.
+    const parsed = new Date(date.replace(/\s+at\s+/i, " "));
+    if (Number.isNaN(parsed.getTime())) return null;
+    return {
+      externalId: `${location.hostname}-${index}-${heading.slice(0, 40)}`,
+      title: heading,
+      source: location.hostname,
+      course: document.title.slice(0, 120),
+      dueAt: parsed.toISOString(),
+    };
+  }).filter(Boolean).slice(0, 100);
 }
 
 async function readStorage() {
@@ -87,16 +130,101 @@ async function activeTab() {
   return tab || null;
 }
 
+async function connectionConfig() {
+  const saved = await chrome.storage.local.get(["appUrl", "token"]);
+  if (!saved.appUrl || !saved.token) return null;
+  return { appUrl: saved.appUrl.replace(/\/$/, ""), token: saved.token };
+}
+
+// Report a recognized service once per day. Sends only the slug, never the URL.
+async function reportService(url, connection) {
+  const slug = matchedService(url);
+  if (!slug) return;
+  const date = localDate();
+  const saved = await chrome.storage.local.get(SERVICES_KEY);
+  const reported = saved[SERVICES_KEY] || {};
+  const key = `${slug}|${date}`;
+  if (reported[key]) return;
+  try {
+    const response = await fetch(`${connection.appUrl}/api/browser/services`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${connection.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ services: [slug] }),
+    });
+    if (!response.ok) return;
+  } catch {
+    return;
+  }
+  reported[key] = true;
+  const retained = Object.fromEntries(Object.keys(reported).sort().slice(-200).map((k) => [k, true]));
+  await chrome.storage.local.set({ [SERVICES_KEY]: retained });
+}
+
+// Scan an education page at most once per host per day and import what it finds.
+async function autoScanPage(tab, connection) {
+  if (categorize(tab.url) !== "education") return;
+  const host = hostnameOf(tab.url);
+  if (!host) return;
+  const date = localDate();
+  const key = `${host}|${date}`;
+  const saved = await chrome.storage.local.get(SCANNED_KEY);
+  const scanned = saved[SCANNED_KEY] || {};
+  if (scanned[key]) return;
+  let items = [];
+  try {
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: assignmentScanFunction,
+    });
+    items = result?.result || [];
+  } catch {
+    return;
+  }
+  if (items.length) {
+    try {
+      const response = await fetch(`${connection.appUrl}/api/browser/import`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${connection.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ items }),
+      });
+      if (!response.ok) return;
+    } catch {
+      return;
+    }
+  }
+  scanned[key] = true;
+  const retained = Object.fromEntries(Object.keys(scanned).sort().slice(-200).map((k) => [k, true]));
+  await chrome.storage.local.set({ [SCANNED_KEY]: retained });
+}
+
 async function tick() {
   const saved = await readStorage();
   const now = Date.now();
+
+  const idleState = await chrome.idle.queryState(60);
+  const tab = idleState === "active" ? await activeTab() : null;
+
+  // Auto-detection runs whenever a connection is saved, independent of the
+  // activity-monitoring toggle.
+  if (tab) {
+    const connection = await connectionConfig();
+    if (connection) {
+      await reportService(tab.url, connection);
+      await autoScanPage(tab, connection);
+    }
+  }
+
   if (!saved.enabled) {
     await chrome.storage.local.set({ [STATE_KEY]: { lastTickAt: now } });
     return;
   }
 
-  const idleState = await chrome.idle.queryState(60);
-  const tab = idleState === "active" ? await activeTab() : null;
   const date = localDate();
   const day = saved.days[date] || emptyDay(date);
   const state = saved.state;

@@ -28,16 +28,18 @@ import type {
   AppSettings,
   AnalysisResult,
   BrowserActivityDay,
+  DetectedIntegration,
   Integration,
   Reflection,
   ReflectionRatings,
   ScheduleEasePlan,
   View,
   WorkloadItem,
+  WorkloadStrain,
 } from "@/lib/types";
 
-const integrations: Integration[] = [
-  { name: "Browser companion", category: "Browser", status: "available", detail: "Summarize opt-in activity patterns and import assignments you review" },
+const baseIntegrations: Integration[] = [
+  { name: "Browser companion", category: "Browser", status: "available", detail: "Automatically summarizes opt-in activity patterns and imports assignments it detects" },
   { name: "Manual entry", category: "School", status: "connected", detail: "Add assignments directly without another account" },
 ];
 
@@ -234,6 +236,8 @@ export default function Home() {
   const [ratings, setRatings] = useState(defaultRatings);
   const [reflections, setReflections] = useState<Reflection[]>([]);
   const [connected, setConnected] = useState<string[]>(["Manual entry"]);
+  const [detectedIntegrations, setDetectedIntegrations] = useState<DetectedIntegration[]>([]);
+  const [workloadStrain, setWorkloadStrain] = useState<WorkloadStrain | null>(null);
   const [analysisEnabled, setAnalysisEnabled] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -306,8 +310,15 @@ export default function Home() {
       .then(([reflectionData, integrationData, workloadData, settingsData, activityData]) => {
         setReflections(reflectionData.reflections ?? []);
         setPairings(integrationData.pairings ?? []);
-        setConnected(integrationData.pairings?.length ? ["Manual entry", "Browser companion"] : ["Manual entry"]);
+        const detected: DetectedIntegration[] = integrationData.detectedIntegrations ?? [];
+        setDetectedIntegrations(detected);
+        setConnected([
+          "Manual entry",
+          ...(integrationData.pairings?.length ? ["Browser companion"] : []),
+          ...detected.map((entry) => entry.name),
+        ]);
         setWorkload(workloadData.items ?? []);
+        setWorkloadStrain(workloadData.strain ?? null);
         setActivity(activityData.activity ?? []);
         if (settingsData.settings) setSettings(settingsData.settings);
       })
@@ -334,6 +345,17 @@ export default function Home() {
   }, [user]);
 
   const latest = reflections[0]?.analysis;
+  const allIntegrations = useMemo<Integration[]>(() => {
+    const detected: Integration[] = detectedIntegrations
+      .filter((entry) => !baseIntegrations.some((base) => base.name === entry.name))
+      .map((entry) => ({
+        name: entry.name,
+        category: entry.category,
+        status: "connected",
+        detail: "Detected automatically by the browser companion",
+      }));
+    return [...baseIntegrations, ...detected];
+  }, [detectedIntegrations]);
   const patternAssessment = useMemo(
     () => assessBurnoutPattern(reflections, workload, activity),
     [reflections, workload, activity],
@@ -1049,13 +1071,13 @@ export default function Home() {
             <div className="page-heading">
               <div>
                 <h1>Integrations</h1>
-                <p>Import reviewed assignment metadata without sharing school passwords or OAuth tokens.</p>
+                <p>Automatically detect assignment metadata without sharing school passwords or OAuth tokens.</p>
               </div>
               <span className="connection-count">{connected.length} connected</span>
             </div>
 
             <div className="integration-list">
-              {integrations.map((integration) => {
+              {allIntegrations.map((integration) => {
                 const isConnected = connected.includes(integration.name);
                 return (
                   <article key={integration.name} className="integration-row">
@@ -1079,9 +1101,12 @@ export default function Home() {
                 <h2>Browser companion</h2>
                 <p>
                   Load the unpacked extension from <code>browser-extension/</code>, create a pairing
-                  key below, then paste it into the extension. Assignment scans still require review.
-                  Optional continuous monitoring sends only daily category minutes, late-night use,
-                  session length, breaks, and tab-switch counts.
+                  key below, then paste it into the extension. Once connected, the companion
+                  automatically detects assignments on classroom pages and imports them, and reports
+                  which learning and productivity services it recognizes. It never sends full URLs,
+                  page text, searches, or messages — only assignment metadata, recognized service
+                  names, and daily category minutes, late-night use, session length, breaks, and
+                  tab-switch counts.
                 </p>
               </div>
             </section>
@@ -1136,6 +1161,15 @@ export default function Home() {
                 <p>Upcoming schoolwork and calendar commitments in one ordered view.</p>
               </div>
               <div className="heading-actions">
+                {workloadStrain && (
+                  <span className={`strain-badge strain-${workloadStrain.level}`}>
+                    {workloadStrain.level === "light"
+                      ? "Light load"
+                      : workloadStrain.level === "moderate"
+                        ? "Moderate load"
+                        : "Heavy load"}
+                  </span>
+                )}
                 <button
                   className="primary-button"
                   onClick={() => setShowWorkloadForm((current) => !current)}
@@ -1144,6 +1178,11 @@ export default function Home() {
                 </button>
               </div>
             </div>
+            {workloadStrain && workloadStrain.drivers.length > 0 && (
+              <p className="strain-drivers">
+                Auto-detected workload strain is {workloadStrain.level}: {workloadStrain.drivers.join(", ")}.
+              </p>
+            )}
             {showWorkloadForm && (
               <form className="manual-workload-form" onSubmit={addManualWorkload}>
                 <label>
@@ -1247,7 +1286,7 @@ export default function Home() {
                     </select>
                   </label>
                   <p className="workload-support">
-                    <Check size={14} /> {workloadSupport(item, patternAssessment.score)}
+                    <Check size={14} /> {workloadSupport(item, workloadStrain?.score ?? patternAssessment.score)}
                   </p>
                 </article>
               ))}

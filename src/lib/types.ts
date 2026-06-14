@@ -99,6 +99,19 @@ export interface Integration {
   detail: string;
 }
 
+export interface DetectedIntegration {
+  name: string;
+  category: string;
+}
+
+export type WorkloadStrainLevel = "light" | "moderate" | "heavy";
+
+export interface WorkloadStrain {
+  score: number;
+  level: WorkloadStrainLevel;
+  drivers: string[];
+}
+
 export interface AppSettings {
   timezone: string;
   reducedMotion: boolean;

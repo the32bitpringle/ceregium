@@ -2,9 +2,22 @@
   "manifest_version": 3,
   "name": "Ceregium Browser Companion",
   "version": "0.2.0",
-  "description": "Privately summarizes browser activity and imports user-reviewed assignments into Ceregium.",
+  "description": "Automatically detects assignments and recognized learning tools, and privately summarizes browser activity for Ceregium.",
   "permissions": ["activeTab", "alarms", "idle", "storage", "scripting", "tabs"],
-  "host_permissions": ["http://localhost/*", "http://127.0.0.1/*"],
+  "host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "*://*.instructure.com/*",
+    "*://classroom.google.com/*",
+    "*://*.blackboard.com/*",
+    "*://*.schoology.com/*",
+    "*://*.moodlecloud.com/*",
+    "*://*.collegeboard.org/*",
+    "*://*.khanacademy.org/*",
+    "*://*.quizlet.com/*",
+    "*://*.desmos.com/*",
+    "*://*.edpuzzle.com/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
